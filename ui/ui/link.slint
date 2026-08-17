@@ -1,0 +1,145 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+import { Theme, ControlSize } from "theme.slint";
+import {
+    LinkTheme,
+    LinkState,
+    LinkVariantProps,
+    LinkSizeProps,
+} from "@theme/link_theme.slint";
+
+export component Link {
+    in property <string> label: "Learn more";
+    in property <bool> disabled: false;
+    // `external` remains as a convenience/backwards-compatible way to request
+    // the stock external-link icon. Supplying `icon` selects any other icon;
+    // leaving both unset renders no icon.
+    in property <bool> external: false;
+    in property <image> icon;
+    in property <ControlSize> size: ControlSize.md;
+    in property <bool> visited: false;
+    in property <bool> force-focused: false;
+    in property <bool> force-pressed: false;
+    in property <bool> underlined: true;
+    in property <color> text-color: theme-style.text-color;
+    in property <color> underline-color: theme-style.underline-color;
+    in property <string> font-family: theme-size.font-family;
+    in property <length> font-size: theme-size.font-size;
+    in property <length> row-height: theme-size.row-height;
+    in property <length> icon-size: theme-size.icon-size;
+    property <LinkSizeProps> theme-size: LinkTheme.size(root.size);
+
+    // ===== THEMEABLE PROPS =====
+    // Defaults follow the active theme; callers only set values they override.
+    in property <int> text-font-weight: 600;
+    in property <length> underline-height: root.focused || root.pressed ? 2px : 1px;
+    in property <color> focus-ring-color:
+        root.focused && !root.disabled ? root.resolved-text-color.with-alpha(Theme.is-dark ? 0.34 : 0.18) : transparent;
+
+    out property <bool> has-focus: focus-scope.has-focus;
+
+    callback clicked();
+
+    forward-focus: focus-scope;
+
+    property <string> actual-font-family: root.font-family;
+    property <length> actual-font-size: root.font-size;
+    property <length> actual-row-height: root.row-height;
+    property <length> actual-icon-size: root.icon-size;
+    property <bool> pressed: link-touch.pressed || root.force-pressed;
+    property <bool> focused: (focus-scope.has-focus || root.force-focused) && !root.disabled;
+    property <LinkState> current-state:
+        root.disabled ? LinkState.disabled : root.pressed ? LinkState.pressed : root.focused ? LinkState.focused : root.visited ? LinkState.visited : LinkState.normal;
+    property <LinkVariantProps> theme-style: LinkTheme.style(root.current-state);
+    property <color> resolved-text-color: root.text-color;
+    property <color> resolved-underline-color: root.underline-color;
+    property <image> resolved-icon:
+        root.icon.width > 0 ? root.icon : root.external ? @image-url("../../resources/icons/arrow-up.svg") : @image-url("");
+    property <bool> show-icon: root.resolved-icon.width > 0;
+    property <length> icon-slot-width: root.show-icon ? actual-icon-size + 6px : 0px;
+    property <length> text-top: (root.height - link-text.preferred-height) / 2;
+    property <length> underline-y:
+        min(
+            root.height - underline-height,
+            text-top + link-text.preferred-height - underline-height - 1px);
+
+    preferred-width: link-text.preferred-width + icon-slot-width + 4px;
+    preferred-height: actual-row-height;
+    width: self.preferred-width;
+    height: actual-row-height;
+
+    Rectangle {
+        x: -2px;
+        y: (root.height - self.height) / 2;
+        width: root.width + 4px;
+        height: root.height - 6px;
+        border-radius: self.height / 2;
+        background: root.focus-ring-color;
+    }
+
+    content := HorizontalLayout {
+        height: root.height;
+        spacing: 6px;
+        padding-left: 2px;
+        padding-right: 2px;
+        alignment: center;
+
+        link-text := Text {
+            text: root.label;
+            color: root.resolved-text-color;
+            font-family: root.actual-font-family;
+            font-size: root.actual-font-size;
+            font-weight: root.text-font-weight;
+            vertical-alignment: center;
+        }
+
+        if root.show-icon: Rectangle {
+            width: root.actual-icon-size;
+            height: root.height;
+
+            Image {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: root.actual-icon-size;
+                height: root.actual-icon-size;
+                source: root.resolved-icon;
+                colorize: root.resolved-text-color;
+            }
+        }
+    }
+
+    Rectangle {
+        x: 0px;
+        y: root.underline-y;
+        width: root.width;
+        height: root.underlined ? root.underline-height : 0px;
+        background: root.underlined ? root.resolved-underline-color : transparent;
+    }
+
+    link-touch := TouchArea {
+        width: root.width;
+        height: root.height;
+        enabled: !root.disabled;
+        clicked => {
+            focus-scope.focus();
+            root.clicked();
+        }
+    }
+
+    focus-scope := FocusScope {
+        x: 0px;
+        y: 0px;
+        width: 0px;
+        height: 0px;
+        enabled: !root.disabled;
+
+        key-pressed(event) => {
+            if (event.text == " " || event.text == "\n") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}

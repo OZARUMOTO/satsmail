@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[env]
+CC_armv7a_unknown_xous_elf = "arm-none-eabi-gcc"
+AR_armv7a_unknown_xous_elf = "arm-none-eabi-ar"
+# macOS: brew's arm-none-eabi-gcc has no bundled newlib; Nix's gcc-arm-embedded
+# (Linux/box) ships its own headers, so a missing -isystem dir is harmlessly
+# ignored there. NOTE: cargo config [env] does NOT expand ${VAR}, so this must
+# stay a literal path.
+CFLAGS_armv7a_unknown_xous_elf = "-isystem /Users/mikegotbtc/arm-newlib/include"
+
+[target.'armv7a-unknown-xous-elf']
+rustflags = [
+    "--cfg", "keyos",
+    '--cfg=curve25519_dalek_backend="serial"',
+]

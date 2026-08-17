@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Michael Totten <mike@ozaru.io>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "satsmail"
+version = "0.2.0"
+edition = "2021"
+
+[workspace]
+exclude = [".foundation-sdk"]
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+foundation-urtypes = { git = "https://github.com/Foundation-Devices/foundation-rs.git", tag = "0.6.0" }
+fs = { path = ".foundation-sdk/current/lib/keyos/api/fs" }
+hex = "0.4"
+log = "0.4"
+log-server = { package = "xous-api-log", path = ".foundation-sdk/current/lib/keyos/xous/api/log" }
+minicbor = { version = "0.24", features = ["std", "derive"] }
+ngwallet = { git = "https://github.com/Foundation-Devices/ngwallet", tag = "3.4.0", features = ["rkyv", "sha2"] }
+security = { path = ".foundation-sdk/current/lib/keyos/api/security" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+server = { path = ".foundation-sdk/current/lib/keyos/server" }
+slint-keyos-platform = { path = ".foundation-sdk/current/lib/keyos/slint-keyos-platform/runtime" }
+
+[build-dependencies]
+slint-keyos-platform-build = { path = ".foundation-sdk/current/lib/keyos/slint-keyos-platform/build" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(keyos)'] }
+
+[patch.crates-io]
+getrandom = { path = ".foundation-sdk/current/lib/keyos/imports/getrandom" }

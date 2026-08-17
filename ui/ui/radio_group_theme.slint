@@ -1,0 +1,45 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// GENERATED from radio_group.schema.json by foundation theme tooling — do not edit by hand.
+// Token-backed props reference the shared Theme global; JSON literals are inlined.
+
+import { Theme, ControlSize } from "theme.slint";
+
+export struct RadioGroupSizeProps {
+    font-family: string,
+    font-size: length,
+    control-size: length,
+    row-height: length,
+    item-gap: length,
+}
+
+export global RadioGroupTheme {
+    public pure function size(s: ControlSize) -> RadioGroupSizeProps {
+        if s == ControlSize.sm {
+            return {
+                font-family: Theme.font-primary,
+                font-size: Theme.font-size-sm,
+                control-size: Theme.choice-control-size-sm,
+                row-height: Theme.control-size-sm,
+                item-gap: 10px,
+            };
+        }
+        if s == ControlSize.md {
+            return {
+                font-family: Theme.font-primary,
+                font-size: Theme.font-size-md,
+                control-size: Theme.choice-control-size-md,
+                row-height: Theme.control-size-md,
+                item-gap: Theme.spacing-md,
+            };
+        }
+        return {
+            font-family: Theme.font-primary,
+            font-size: Theme.font-size-lg,
+            control-size: Theme.choice-control-size-lg,
+            row-height: Theme.control-size-lg,
+            item-gap: 14px,
+        };
+    }
+}

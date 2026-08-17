@@ -1,0 +1,85 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// GENERATED from accordion.schema.json by foundation theme tooling — do not edit by hand.
+// Token-backed props reference the shared Theme global; JSON literals are inlined.
+
+import { Theme, ControlSize } from "theme.slint";
+
+export enum AccordionState {
+    normal,
+    disabled,
+}
+
+export struct AccordionVariantProps {
+    background: color,
+    border-color: color,
+    separator-color: color,
+    title-color: color,
+    title-disabled-color: color,
+    title-font-weight: int,
+    subtitle-color: color,
+    chevron-color: color,
+    body-color: color,
+    expanded-divider-color: color,
+}
+
+export struct AccordionSizeProps {
+    font-family: string,
+    font-size: length,
+    header-height: length,
+    padding-horizontal: length,
+    icon-size: length,
+    border-width: length,
+    border-radius: length,
+}
+
+export global AccordionTheme {
+    public pure function style(st: AccordionState) -> AccordionVariantProps {
+        return {
+            background: Theme.color-surface,
+            border-color: Theme.color-border,
+            separator-color: Theme.color-border,
+            title-color: Theme.color-foreground,
+            title-disabled-color: Theme.color-muted,
+            title-font-weight: Theme.font-weight-bold,
+            subtitle-color: Theme.color-muted,
+            chevron-color: Theme.color-muted,
+            body-color: Theme.color-foreground,
+            expanded-divider-color: Theme.color-border,
+        };
+    }
+    public pure function size(s: ControlSize) -> AccordionSizeProps {
+        if s == ControlSize.sm {
+            return {
+                font-family: Theme.font-primary,
+                font-size: Theme.font-size-sm,
+                header-height: Theme.control-size-sm,
+                padding-horizontal: Theme.control-padding-inline-sm,
+                icon-size: Theme.icon-size-sm,
+                border-width: 1px,
+                border-radius: Theme.radius-default,
+            };
+        }
+        if s == ControlSize.md {
+            return {
+                font-family: Theme.font-primary,
+                font-size: Theme.font-size-md,
+                header-height: Theme.control-size-md,
+                padding-horizontal: Theme.control-padding-inline-md,
+                icon-size: Theme.icon-size-md,
+                border-width: 1px,
+                border-radius: Theme.radius-default,
+            };
+        }
+        return {
+            font-family: Theme.font-primary,
+            font-size: Theme.font-size-lg,
+            header-height: Theme.control-size-lg,
+            padding-horizontal: Theme.control-padding-inline-lg,
+            icon-size: Theme.icon-size-lg,
+            border-width: 1px,
+            border-radius: Theme.radius-default,
+        };
+    }
+}

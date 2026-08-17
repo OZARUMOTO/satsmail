@@ -1,0 +1,169 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+import { Theme, ControlSize } from "theme.slint";
+import { SheetTheme, SheetSizeProps } from "@theme/sheet_theme.slint";
+
+export component Sheet {
+    in-out property <bool> open: true;
+    in property <ControlSize> size: ControlSize.md;
+    in property <bool> show-handle: true;
+    in property <bool> dismissable: true;
+    in property <[float]> detents: [0.4, 0.72, 0.92];
+    in-out property <int> selected-detent: 1;
+    in property <string> font-family: theme-size.font-family;
+    in property <length> font-size: theme-size.font-size;
+    in property <length> panel-padding: theme-size.panel-padding;
+    in property <length> content-padding: theme-size.content-padding;
+    in property <length> border-radius: theme-size.border-radius;
+    in property <length> handle-width: theme-size.handle-width;
+    property <SheetSizeProps> theme-size: SheetTheme.size(root.size);
+
+    // ===== THEMEABLE PROPS =====
+    // Defaults follow the active theme; callers only set values they override.
+    in property <color> backdrop-color: root.open ? Theme.palette-foreground.with-alpha(Theme.is-dark ? 0.64 : 0.18) : transparent;
+    in property <color> panel-background: Theme.palette-surface;
+    in property <color> panel-border-color: Theme.palette-border;
+    in property <length> panel-border-width: 1px;
+    in property <color> handle-color: Theme.palette-border;
+    in property <length> handle-height: 6px;
+    in property <length> handle-radius: 3px;
+    in property <color> title-color: Theme.palette-foreground;
+    in property <length> title-font-size: Theme.font-size-title;
+    in property <int> title-font-weight: 700;
+    in property <color> body-color: Theme.palette-muted;
+    in property <length> divider-height: 1px;
+    in property <color> divider-color: Theme.palette-border.with-alpha(0.75);
+    in property <color> detent-card-background: Theme.palette-secondary.with-alpha(Theme.is-dark ? 0.34 : 0.52);
+    in property <length> detent-card-radius: 24px;
+    in property <color> detent-label-color: Theme.palette-muted;
+    in property <length> detent-label-font-size: Theme.font-size-label;
+    in property <int> detent-label-font-weight: 600;
+    in property <color> detent-value-color: Theme.palette-foreground;
+    in property <length> detent-value-font-size: root.actual-font-size + 2px;
+    in property <int> detent-value-font-weight: 600;
+    in property <color> detent-helper-color: Theme.palette-muted;
+
+    callback dismissed();
+    callback detent-changed(int);
+
+    property <string> actual-font-family: root.font-family;
+    property <length> actual-font-size: root.font-size;
+    property <length> actual-panel-padding: root.panel-padding;
+    property <length> actual-content-padding: root.content-padding;
+    property <length> actual-border-radius: root.border-radius;
+    property <length> actual-handle-width: root.handle-width;
+    property <float> active-detent:
+        root.selected-detent >= 0 && root.selected-detent < root.detents.length ? root.detents[root.selected-detent] : 0.72;
+    property <length> sheet-height: max(180px, root.height * root.active-detent);
+    property <length> drag-offset: 0px;
+    property <length> dismiss-drag-distance: 48px;
+
+    preferred-width: 420px;
+    preferred-height: 420px;
+
+    Rectangle {
+        visible: root.open;
+        width: parent.width;
+        height: parent.height;
+        background: root.backdrop-color;
+
+        backdrop-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            enabled: root.dismissable;
+            clicked => {
+                root.open = false;
+                root.dismissed();
+            }
+        }
+
+        panel := Rectangle {
+            visible: root.open;
+            x: 0px;
+            y: parent.height - self.height + root.drag-offset;
+            width: parent.width;
+            height: root.sheet-height;
+            background: root.panel-background;
+            border-color: root.panel-border-color;
+            border-width: root.panel-border-width;
+            border-top-left-radius: root.actual-border-radius;
+            border-top-right-radius: root.actual-border-radius;
+            border-bottom-left-radius: 0px;
+            border-bottom-right-radius: 0px;
+            clip: true;
+
+            panel-touch-blocker := TouchArea {
+                width: parent.width;
+                height: parent.height;
+            }
+
+            VerticalLayout {
+                padding-left: root.actual-panel-padding;
+                padding-right: root.actual-panel-padding;
+                padding-top: root.actual-panel-padding - 6px;
+                padding-bottom: root.actual-panel-padding;
+                spacing: 14px;
+
+                if root.show-handle: handle-target := Rectangle {
+                    height: 24px;
+
+                    Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        width: root.actual-handle-width;
+                        height: root.handle-height;
+                        border-radius: root.handle-radius;
+                        background: root.handle-color;
+                    }
+                }
+
+                content-frame := Rectangle {
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        width: parent.width;
+                        height: parent.height;
+                        padding: root.actual-content-padding;
+                        spacing: 14px;
+
+                        @children
+                    }
+                }
+            }
+
+            // Use a generous, fixed header target so the pointer remains
+            // captured long enough to cross the dismiss threshold. The visual
+            // handle itself remains the themed 6px bar above.
+            if root.show-handle: drag-target := TouchArea {
+                width: parent.width;
+                height: min(parent.height, 96px);
+                enabled: root.dismissable;
+
+                moved => {
+                    if (self.pressed) {
+                        // The panel moves with the pointer, so accumulate the
+                        // local delta to preserve the absolute drag distance.
+                        root.drag-offset = max(
+                            0px,
+                            root.drag-offset + self.mouse-y - self.pressed-y,
+                        );
+                    }
+                }
+
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.up) {
+                        if (root.drag-offset >= root.dismiss-drag-distance) {
+                            root.open = false;
+                            root.dismissed();
+                        }
+                        root.drag-offset = 0px;
+                    } else if (event.kind == PointerEventKind.cancel) {
+                        root.drag-offset = 0px;
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,44 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// GENERATED from divider.schema.json by foundation theme tooling — do not edit by hand.
+// Token-backed props reference the shared Theme global; JSON literals are inlined.
+
+import { Theme, ControlSize } from "theme.slint";
+
+export enum DividerState {
+    normal,
+}
+
+export struct DividerVariantProps {
+    divider-color: color,
+    label-color: color,
+}
+
+export struct DividerSizeProps {
+    font-family: string,
+    font-size: length,
+    label-gap: length,
+    label-start-margin: length,
+    label-end-margin: length,
+    thickness: length,
+}
+
+export global DividerTheme {
+    public pure function style(st: DividerState) -> DividerVariantProps {
+        return {
+            divider-color: Theme.color-border,
+            label-color: Theme.color-muted,
+        };
+    }
+    public pure function size() -> DividerSizeProps {
+        return {
+            font-family: Theme.font-primary,
+            font-size: 13px,
+            label-gap: Theme.spacing-sm,
+            label-start-margin: Theme.spacing-lg,
+            label-end-margin: Theme.spacing-lg,
+            thickness: 1px,
+        };
+    }
+}

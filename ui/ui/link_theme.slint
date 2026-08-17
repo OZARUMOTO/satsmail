@@ -1,0 +1,78 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// GENERATED from link.schema.json by foundation theme tooling — do not edit by hand.
+// Token-backed props reference the shared Theme global; JSON literals are inlined.
+
+import { Theme, ControlSize } from "theme.slint";
+
+export enum LinkState {
+    normal,
+    focused,
+    pressed,
+    disabled,
+    visited,
+}
+
+export struct LinkVariantProps {
+    text-color: color,
+    underline-color: color,
+}
+
+export struct LinkSizeProps {
+    font-family: string,
+    font-size: length,
+    row-height: length,
+    icon-size: length,
+}
+
+export global LinkTheme {
+    public pure function style(st: LinkState) -> LinkVariantProps {
+        if st == LinkState.pressed {
+            return {
+                text-color: Theme.color-primary-dark,
+                underline-color: Theme.color-primary-dark,
+            };
+        }
+        if st == LinkState.disabled {
+            return {
+                text-color: Theme.color-muted,
+                underline-color: Theme.color-transparent,
+            };
+        }
+        if st == LinkState.visited {
+            return {
+                text-color: Theme.color-muted,
+                underline-color: Theme.color-muted,
+            };
+        }
+        return {
+            text-color: Theme.color-primary,
+            underline-color: Theme.color-primary,
+        };
+    }
+    public pure function size(s: ControlSize) -> LinkSizeProps {
+        if s == ControlSize.sm {
+            return {
+                font-family: Theme.font-primary,
+                font-size: Theme.font-size-sm,
+                row-height: 44px,
+                icon-size: 16px,
+            };
+        }
+        if s == ControlSize.md {
+            return {
+                font-family: Theme.font-primary,
+                font-size: Theme.font-size-md,
+                row-height: 52px,
+                icon-size: 18px,
+            };
+        }
+        return {
+            font-family: Theme.font-primary,
+            font-size: Theme.font-size-lg,
+            row-height: 60px,
+            icon-size: Theme.icon-size-sm,
+        };
+    }
+}

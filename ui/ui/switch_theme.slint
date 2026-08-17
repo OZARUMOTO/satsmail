@@ -1,0 +1,88 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// GENERATED from switch.schema.json by foundation theme tooling — do not edit by hand.
+// Token-backed props reference the shared Theme global; JSON literals are inlined.
+
+import { Theme, ControlSize } from "theme.slint";
+
+export enum SwitchState {
+    unchecked,
+    checked,
+    indeterminate,
+    disabled,
+}
+
+export struct SwitchVariantProps {
+    track-color: color,
+    knob-color: color,
+    label-color: color,
+    description-color: color,
+}
+
+export struct SwitchSizeProps {
+    font-family: string,
+    font-size: length,
+    track-height: length,
+    knob-size: length,
+    description-font-size: length,
+    row-height: length,
+}
+
+export global SwitchTheme {
+    public pure function style(st: SwitchState) -> SwitchVariantProps {
+        if st == SwitchState.checked
+            || st == SwitchState.indeterminate {
+            return {
+                track-color: Theme.color-primary,
+                knob-color: Theme.color-background,
+                label-color: Theme.color-foreground,
+                description-color: Theme.color-muted,
+            };
+        }
+        if st == SwitchState.disabled {
+            return {
+                track-color: Theme.color-border,
+                knob-color: Theme.color-background,
+                label-color: Theme.color-muted,
+                description-color: Theme.color-muted,
+            };
+        }
+        return {
+            track-color: Theme.color-secondary,
+            knob-color: Theme.color-background,
+            label-color: Theme.color-foreground,
+            description-color: Theme.color-muted,
+        };
+    }
+    public pure function size(s: ControlSize) -> SwitchSizeProps {
+        if s == ControlSize.sm {
+            return {
+                font-family: Theme.font-primary,
+                font-size: Theme.font-size-sm,
+                track-height: Theme.switch-size-sm,
+                knob-size: Theme.switch-size-sm,
+                description-font-size: Theme.font-size-helper,
+                row-height: Theme.control-size-sm,
+            };
+        }
+        if s == ControlSize.md {
+            return {
+                font-family: Theme.font-primary,
+                font-size: Theme.font-size-md,
+                track-height: Theme.switch-size-md,
+                knob-size: Theme.switch-size-md,
+                description-font-size: Theme.font-size-helper,
+                row-height: Theme.control-size-md,
+            };
+        }
+        return {
+            font-family: Theme.font-primary,
+            font-size: Theme.font-size-lg,
+            track-height: Theme.switch-size-lg,
+            knob-size: Theme.switch-size-lg,
+            description-font-size: Theme.font-size-helper,
+            row-height: Theme.control-size-lg,
+        };
+    }
+}

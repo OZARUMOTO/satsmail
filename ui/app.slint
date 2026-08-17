@@ -1,0 +1,1005 @@
+// SPDX-FileCopyrightText: 2026 Michael Totten <mike@ozaru.io>
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// SATSMAIL — a retro 2009 email client that happens to be a Bitcoin wallet.
+// Everything is greyscale on purpose: grey chrome, black ink, white highlights.
+// The Prime's monochrome screen makes this look native.
+
+// The fork's widget library carries the theme globals in keyos-theme.slint
+// (the CLI overlays the stock theme.slint, so Utils/Size/CurrentTheme/
+// Palettes live in keyos-theme.slint alongside it).
+import { Utils, Images, CurrentTheme, Palettes, Size, UISize } from "@ui/keyos-theme.slint";
+import { BasePage, TextMd, TextSm, TextXs, Qrcode, ScrollBody, DynamicQrCode } from "@ui/widgets.slint";
+
+export { Utils, Images, CurrentTheme }
+
+// Windows-classic greys — the whole app is built from these.
+global Retro {
+    out property <brush> face: #C0C0C0;
+    out property <brush> face-light: #E8E8E8;
+    out property <brush> face-bright: #FFFFFF;
+    out property <brush> face-dark: #808080;
+    out property <brush> ink: #000000;
+    out property <brush> ink-muted: #505050;
+    out property <brush> titlebar: #6E6E6E;
+}
+
+// One row in the inbox. Mirrors sync::Mail on the Rust side.
+export struct MailItem {
+    subject: string,   // "receive btc" / "send btc"
+    amount: string,    // "+0.00566284" / "-0.00100000"
+    detail: string,    // "from bc1q…" / "to bc1q…"
+    status: string,    // "[16 confirmations]"
+    fresh: bool,       // unconfirmed = unread
+}
+
+export global Callbacks {
+    callback show-page(int);
+    callback open-tx(int);
+    callback new-address();
+    callback export-xpub();  // save the account xpub to the airlock (USB share)
+    callback refresh();
+    callback scan-sync();   // offline inbox refresh: scan a sync QR from the phone
+    callback scan-psbt();
+    callback sign-psbt();
+    callback cancel-send();
+    callback done-send();
+    callback broadcast();
+    pure callback get-signed-ur(int) -> [string];
+
+    // compose-send (build the tx on-device — no companion PSBT)
+    callback compose-send();
+    callback scan-address();
+    callback set-amount(string);
+    callback set-fee-preset(int);
+    callback set-custom-fee(string);
+    callback build-compose();
+    pure callback get-broadcast-url() -> string;
+
+    in-out property <int> page: 0;                        // 0 inbox, 1 compose, 2 send, 3 tx detail
+    in-out property <int> unread: 0;
+    in-out property <string> balance: "0 BTC";
+    in-out property <string> receive-address: "";
+    // The receive QR, pre-rendered by Rust (NOT the Qrcode widget): the
+    // widget's Utils.qrcode runs synchronously on the UI thread during page
+    // construction (~1.5 ms on desktop, far worse on the MCU) — that was the
+    // compose-tab hang. QXXX renders the QR in Rust and shows an Image.
+    in-out property <image> receive-qr;
+    // satsmail's wallet derives from the app-scoped seed — the box's bwt
+    // must track THIS account xpub (bwt -x <xpub>:wpkh) for the inbox to
+    // see satsmail's funds.
+    in-out property <string> account-xpub: "";
+    in-out property <string> export-status: "";
+    in-out property <string> sync-status: "electrum: offline";
+    in-out property <[MailItem]> inbox;
+
+    // send flow state: 0 idle, 1 scanning, 2 preview, 3 signing, 4 done, 5 error,
+    // 6 compose-scan-address, 7 compose-amount-fee, 8 compose-preview
+    in-out property <int> send-state: 0;
+    in-out property <int> send-mode: 0;   // 0 = PSBT flow, 1 = compose-send
+    in-out property <string> send-to;
+    in-out property <string> send-amount;
+    in-out property <string> send-fee;
+    in-out property <string> send-broadcast;
+
+    // compose-send inputs
+    in-out property <string> send-amount-input;
+    in-out property <string> send-amount-hint;
+    in-out property <string> send-fee-preset-low;
+    in-out property <string> send-fee-preset-med;
+    in-out property <string> send-fee-preset-high;
+    in-out property <string> send-fee-selected;
+    in-out property <string> send-custom-fee;
+    in-out property <string> broadcast-url;
+    // The pushtx-URL QR for the compose done screen, pre-rendered by Rust
+    // (same reason as receive-qr — the Qrcode widget would re-run Utils.qrcode
+    // on the UI thread every time the send page is constructed).
+    in-out property <image> broadcast-qr;
+
+    // tx detail page
+    in-out property <string> tx-subject;
+    in-out property <string> tx-amount;
+    in-out property <string> tx-detail;
+    in-out property <string> tx-status;
+}
+
+// ───────────────────────────── buttons ─────────────────────────────
+
+// Windows-classic pushbutton: grey face, white bevel when up, dark when pressed.
+component RetroButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    callback clicked();
+
+    height: 56px;
+    background: active ? Retro.face-bright : Retro.face;
+    border-width: 2px;
+    border-color: active ? Retro.face-dark : Retro.face-bright;
+
+    TouchArea {
+        clicked => {
+            root.clicked();
+        }
+
+        TextSm {
+            text: root.label;
+            color: Retro.ink;
+            bold: root.active;
+            width: 100%;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// ───────────────────────────── window chrome ─────────────────────────────
+
+component TitleBar inherits Rectangle {
+    height: 44px;
+    background: Retro.titlebar;
+    border-width: 1px;
+    border-color: Retro.ink;
+
+    HorizontalLayout {
+        padding-left: Size.sz2;
+        padding-right: Size.sz2;
+
+        TextSm {
+            text: "satsmail";
+            color: Retro.face-bright;
+            bold: true;
+            vertical-alignment: center;
+        }
+
+        TextXs {
+            text: Callbacks.sync-status;
+            color: Retro.face-light;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component BalanceBar inherits Rectangle {
+    height: 44px;
+    background: Retro.face-bright;
+    border-width: 1px;
+    border-color: Retro.face-dark;
+
+    TextMd {
+        text: "balance: " + Callbacks.balance;
+        color: Retro.ink;
+        bold: true;
+        width: 100%;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// ───────────────────────────── inbox / history ─────────────────────────────
+
+// One email-style row: subject = receive/send, amount = BTC delta.
+component TxRow inherits Rectangle {
+    in property <string> subject;
+    in property <string> amount;
+    in property <string> detail;
+    in property <string> status;
+    in property <bool> fresh: false;
+    callback clicked();
+
+    height: 72px;
+    background: fresh ? Retro.face-bright : Retro.face;
+    border-width: 1px;
+    border-color: Retro.face-dark;
+
+    TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    VerticalLayout {
+        padding-left: Size.sz2;
+        padding-right: Size.sz2;
+        padding-top: Size.sz1;
+        padding-bottom: Size.sz1;
+        spacing: 2px;
+
+        HorizontalLayout {
+            alignment: space-between;
+
+            TextSm {
+                text: root.subject;
+                color: Retro.ink;
+                bold: root.fresh;
+                vertical-alignment: center;
+            }
+
+            TextSm {
+                text: root.amount;
+                color: root.fresh ? Retro.ink : Retro.ink-muted;
+                bold: root.fresh;
+                vertical-alignment: center;
+            }
+        }
+
+        HorizontalLayout {
+            alignment: space-between;
+
+            TextXs {
+                text: root.detail;
+                color: Retro.ink-muted;
+            }
+
+            TextXs {
+                text: root.status;
+                color: Retro.ink-muted;
+            }
+        }
+    }
+}
+
+component InboxPage inherits VerticalLayout {
+    spacing: 0px;
+
+    ScrollBody {
+        p-x: 0px;
+        p-y: 0px;
+
+        VerticalLayout {
+            spacing: 1px;
+
+            for item[i] in Callbacks.inbox: TxRow {
+                subject: item.subject;
+                amount: item.amount;
+                detail: item.detail;
+                status: item.status;
+                fresh: item.fresh;
+                clicked => { Callbacks.open-tx(i); }
+            }
+
+            // empty state
+            if Callbacks.inbox.length == 0: Rectangle {
+                height: 120px;
+                background: transparent;
+
+                TextSm {
+                    text: "inbox empty — receive btc to get started";
+                    color: Retro.ink-muted;
+                    width: 100%;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    // Offline refresh: the phone renders the wallet sync as an animated UR2
+    // QR (see the companion), the Prime scans it and the inbox updates — no
+    // cable, no electrum, no network on the device.
+    RetroButton {
+        label: "sync from qr";
+        height: 48px;
+        clicked => { Callbacks.scan-sync(); }
+    }
+
+    // Status line, like a mail client's footer — pinned below the list
+    Rectangle {
+        height: 28px;
+        background: Retro.face;
+
+        TouchArea {
+            clicked => { Callbacks.refresh(); }
+
+            TextXs {
+                text: "inbox (" + Callbacks.unread + ")  |  tap to refresh";
+                color: Retro.ink-muted;
+                width: 100%;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// ───────────────────────────── compose / receive ─────────────────────────────
+
+component ComposePage inherits VerticalLayout {
+    spacing: 0px;
+
+    // The QR + xpub block is taller than the screen — scroll it so the
+    // TabBar stays pinned (same pattern as InboxPage / QXXX pages).
+    ScrollBody {
+        p-x: Size.sz2;
+        p-y: Size.sz2;
+
+        VerticalLayout {
+            spacing: Size.sz2;
+            alignment: start;
+
+            TextSm {
+                text: "compose - receive btc";
+                color: Retro.ink;
+                bold: true;
+            }
+
+            TextXs {
+                text: "show this address to the sender";
+                color: Retro.ink-muted;
+            }
+
+            HorizontalLayout {
+                alignment: center;
+
+                Rectangle {
+                    width: 260px;
+                    height: 260px;
+                    background: Retro.face-bright;
+                    border-width: 2px;
+                    border-color: Retro.ink;
+
+                    // Pre-rendered by Rust (see receive-qr) — mounting a
+                    // Qrcode widget here would re-run Utils.qrcode on the UI
+                    // thread every time this page is constructed (the tab hang).
+                    Image {
+                        source: Callbacks.receive-qr;
+                        width: 248px;
+                        height: 248px;
+                        image-fit: contain;
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 48px;
+                background: Retro.face-bright;
+                border-width: 1px;
+                border-color: Retro.face-dark;
+
+                TextXs {
+                    text: Callbacks.receive-address;
+                    color: Retro.ink;
+                    width: 100%;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            HorizontalLayout {
+                alignment: center;
+                spacing: Size.sz2;
+
+                RetroButton {
+                    label: "new address";
+                    active: false;
+                    clicked => { Callbacks.new-address(); }
+                }
+
+                RetroButton {
+                    label: "refresh";
+                    active: false;
+                    clicked => { Callbacks.refresh(); }
+                }
+            }
+
+            // The box-side companion needs this to watch satsmail's wallet:
+            // `bwt -x <xpub>:wpkh` — the app-seed wallet is NOT the built-in one.
+            Rectangle {
+                height: 92px;
+                background: Retro.face;
+                border-width: 1px;
+                border-color: Retro.face-dark;
+
+                VerticalLayout {
+                    padding: Size.sz1;
+                    spacing: 2px;
+
+                    TextXs {
+                        text: "account xpub (for bwt -x)";
+                        color: Retro.ink-muted;
+                    }
+
+                    TextXs {
+                        text: Callbacks.account-xpub;
+                        color: Retro.ink;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // Export the xpub to the airlock: plug the Prime into a computer and the
+            // file shows up on the USB share — no typing long xpubs on the device.
+            RetroButton {
+                label: "export xpub to airlock";
+                active: false;
+                clicked => { Callbacks.export-xpub(); }
+            }
+
+            TextXs {
+                text: Callbacks.export-status;
+                color: Retro.ink-muted;
+                width: 100%;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
+
+// ───────────────────────────── send ─────────────────────────────
+
+// Monospace text entry with the on-screen keyboard (same as QXXX's TermInput).
+component TermInput inherits Rectangle {
+    in-out property <string> text;
+    in property <InputType> input-type: InputType.text;
+    callback edited();
+
+    height: 40px;
+    background: Retro.face-bright;
+    border-width: 1px;
+    border-color: Retro.face-dark;
+    border-radius: 2px;
+
+    input := TextInput {
+        text <=> root.text;
+        edited => { root.edited(); }
+        input-type: root.input-type;
+        color: Retro.ink;
+        font-size: 12px;
+        font-family: "monospace";
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        padding-left: 8px;
+        padding-right: 8px;
+    }
+}
+
+component SendPage inherits VerticalLayout {
+    spacing: 0px;
+
+    // The whole send state machine is taller than the screen (especially the
+    // compose amount+fee step) — scroll it so the TabBar stays pinned.
+    ScrollBody {
+        p-x: Size.sz2;
+        p-y: Size.sz2;
+
+        VerticalLayout {
+            spacing: Size.sz2;
+
+    TextSm {
+        text: "> send btc";
+        color: Retro.ink;
+        bold: true;
+        width: 100%;
+        horizontal-alignment: center;
+    }
+
+    // 0 — idle: PSBT from a wallet, or compose-send built on-device
+    if Callbacks.send-state == 0: VerticalLayout {
+        spacing: Size.sz2;
+        alignment: center;
+
+        TextXs {
+            text: Callbacks.send-mode == 1 ? "sync first (q-r sync feeds the utxos)" : "scan a PSBT, or compose-send on-device";
+            color: Retro.ink-muted;
+            width: 100%;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        RetroButton {
+            label: "scan psbt";
+            active: true;
+            clicked => { Callbacks.scan-psbt(); }
+        }
+
+        RetroButton {
+            label: "compose send";
+            active: true;
+            clicked => { Callbacks.compose-send(); }
+        }
+    }
+
+    // 1 — scanning
+    if Callbacks.send-state == 1: VerticalLayout {
+        spacing: Size.sz2;
+        alignment: center;
+
+        TextSm {
+            text: "scanning…";
+            color: Retro.ink;
+            width: 100%;
+            horizontal-alignment: center;
+        }
+
+        TextXs {
+            text: "point the camera at the psbt qr";
+            color: Retro.ink-muted;
+            width: 100%;
+            horizontal-alignment: center;
+        }
+    }
+
+    // 2 — preview (the "draft" email)
+    if Callbacks.send-state == 2: VerticalLayout {
+        spacing: Size.sz2;
+        alignment: start;
+
+        Rectangle {
+            height: 160px;
+            background: Retro.face-bright;
+            border-width: 1px;
+            border-color: Retro.face-dark;
+
+            VerticalLayout {
+                padding: Size.sz2;
+                spacing: 8px;
+
+                TextXs {
+                    text: "to:  " + Callbacks.send-to;
+                    color: Retro.ink;
+                    wrap: word-wrap;
+                }
+
+                TextXs {
+                    text: "amount:  " + Callbacks.send-amount + " BTC";
+                    color: Retro.ink;
+                    bold: true;
+                }
+
+                TextXs {
+                    text: "fee:  " + Callbacks.send-fee + " BTC";
+                    color: Retro.ink-muted;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: Size.sz2;
+
+            RetroButton {
+                label: "cancel";
+                active: false;
+                clicked => { Callbacks.cancel-send(); }
+            }
+
+            RetroButton {
+                label: "sign & send";
+                active: true;
+                clicked => { Callbacks.sign-psbt(); }
+            }
+        }
+    }
+
+    // 3 — signing
+    if Callbacks.send-state == 3: VerticalLayout {
+        spacing: Size.sz2;
+        alignment: center;
+
+        TextSm {
+            text: "signing…";
+            color: Retro.ink;
+            width: 100%;
+            horizontal-alignment: center;
+        }
+    }
+
+    // 4 — done: signed tx as a QR. PSBT flow → animated UR2 psbt QR (for a
+    // wallet to scan); compose flow → static pushtx URL QR (phone camera
+    // opens it, the box broadcasts).
+    if Callbacks.send-state == 4 && Callbacks.send-mode == 0: VerticalLayout {
+        spacing: Size.sz2;
+        alignment: center;
+
+        TextXs {
+            text: "signed — scan to broadcast";
+            color: Retro.ink-muted;
+            width: 100%;
+            horizontal-alignment: center;
+        }
+
+        DynamicQrCode {
+            get-parts(density) => {
+                Callbacks.get-signed-ur(density);
+            }
+        }
+
+        TextXs {
+            text: Callbacks.send-broadcast;
+            color: Retro.ink;
+            width: 100%;
+            horizontal-alignment: center;
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: Size.sz2;
+
+            RetroButton {
+                label: "broadcast";
+                active: false;
+                clicked => { Callbacks.broadcast(); }
+            }
+
+            RetroButton {
+                label: "done";
+                active: true;
+                clicked => { Callbacks.done-send(); }
+            }
+        }
+    }
+
+    // 4 — done (compose): static pushtx URL QR — the phone camera opens it
+    // and the box's /broadcast page submits it to your own bitcoind.
+    if Callbacks.send-state == 4 && Callbacks.send-mode == 1: VerticalLayout {
+        spacing: Size.sz2;
+        alignment: center;
+
+        TextXs {
+            text: "signed — scan with your phone camera";
+            color: Retro.ink-muted;
+            width: 100%;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        // Pre-rendered by Rust (see broadcast-qr) — avoids re-running
+        // Utils.qrcode on the UI thread every time this page is constructed.
+        Image {
+            source: Callbacks.broadcast-qr;
+            width: 300px;
+            height: 300px;
+            image-fit: contain;
+        }
+
+        TextXs {
+            text: Callbacks.broadcast-url != ""
+                ? "the q-r opens the box's broadcast page — it submits via your own bitcoind"
+                : "broadcast base missing — sync again (q-r sync carries it)";
+            color: Retro.ink;
+            width: 100%;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        TextXs {
+            text: Callbacks.send-broadcast;
+            color: Retro.ink;
+            width: 100%;
+            horizontal-alignment: center;
+        }
+
+        RetroButton {
+            label: "done";
+            active: true;
+            clicked => { Callbacks.done-send(); }
+        }
+    }
+
+    // 6 — compose: scan a plain address QR
+    if Callbacks.send-state == 6: VerticalLayout {
+        spacing: Size.sz2;
+        alignment: center;
+
+        TextXs {
+            text: "scan any bitcoin address";
+            color: Retro.ink-muted;
+            width: 100%;
+            horizontal-alignment: center;
+        }
+
+        RetroButton {
+            label: "scan address";
+            active: true;
+            clicked => { Callbacks.scan-address(); }
+        }
+
+        RetroButton {
+            label: "cancel";
+            active: false;
+            clicked => { Callbacks.cancel-send(); }
+        }
+    }
+
+    // 7 — compose: amount + fee
+    if Callbacks.send-state == 7: VerticalLayout {
+        spacing: Size.sz2;
+        alignment: start;
+
+        TextXs {
+            text: "to:  " + Callbacks.send-to;
+            color: Retro.ink;
+            wrap: word-wrap;
+        }
+
+        TextXs {
+            text: "amount (btc)";
+            color: Retro.ink-muted;
+        }
+
+        TermInput {
+            text <=> Callbacks.send-amount-input;
+            input-type: InputType.decimal;
+            edited => { Callbacks.set-amount(Callbacks.send-amount-input); }
+        }
+
+        TextXs {
+            text: Callbacks.send-amount-hint;
+            color: Retro.ink;
+            width: 100%;
+            horizontal-alignment: center;
+        }
+
+        TextXs {
+            text: "fee rate";
+            color: Retro.ink-muted;
+        }
+
+        HorizontalLayout {
+            spacing: Size.sz1;
+            RetroButton {
+                label: Callbacks.send-fee-preset-low != "" ? Callbacks.send-fee-preset-low : "low";
+                active: Callbacks.send-fee-selected == Callbacks.send-fee-preset-low && Callbacks.send-fee-preset-low != "";
+                clicked => { Callbacks.set-fee-preset(0); }
+            }
+            RetroButton {
+                label: Callbacks.send-fee-preset-med != "" ? Callbacks.send-fee-preset-med : "medium";
+                active: Callbacks.send-fee-selected == Callbacks.send-fee-preset-med && Callbacks.send-fee-preset-med != "";
+                clicked => { Callbacks.set-fee-preset(1); }
+            }
+            RetroButton {
+                label: Callbacks.send-fee-preset-high != "" ? Callbacks.send-fee-preset-high : "high";
+                active: Callbacks.send-fee-selected == Callbacks.send-fee-preset-high && Callbacks.send-fee-preset-high != "";
+                clicked => { Callbacks.set-fee-preset(2); }
+            }
+        }
+
+        TextXs {
+            text: "custom (sat/vB)";
+            color: Retro.ink-muted;
+        }
+
+        TermInput {
+            text <=> Callbacks.send-custom-fee;
+            input-type: InputType.number;
+            edited => { Callbacks.set-custom-fee(Callbacks.send-custom-fee); }
+        }
+
+        TextXs {
+            text: Callbacks.send-fee-selected;
+            color: Retro.ink;
+            width: 100%;
+            horizontal-alignment: center;
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: Size.sz2;
+
+            RetroButton {
+                label: "cancel";
+                active: false;
+                clicked => { Callbacks.cancel-send(); }
+            }
+
+            RetroButton {
+                label: "build";
+                active: true;
+                clicked => { Callbacks.build-compose(); }
+            }
+        }
+    }
+
+    // 8 — compose preview (the "draft" email)
+    if Callbacks.send-state == 8: VerticalLayout {
+        spacing: Size.sz2;
+        alignment: start;
+
+        Rectangle {
+            height: 160px;
+            background: Retro.face-bright;
+            border-width: 1px;
+            border-color: Retro.face-dark;
+
+            VerticalLayout {
+                padding: Size.sz2;
+                spacing: 8px;
+
+                TextXs {
+                    text: "to:  " + Callbacks.send-to;
+                    color: Retro.ink;
+                    wrap: word-wrap;
+                }
+
+                TextXs {
+                    text: "amount:  " + Callbacks.send-amount + " BTC";
+                    color: Retro.ink;
+                    bold: true;
+                }
+
+                TextXs {
+                    text: "fee:  " + Callbacks.send-fee + " BTC";
+                    color: Retro.ink-muted;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: Size.sz2;
+
+            RetroButton {
+                label: "cancel";
+                active: false;
+                clicked => { Callbacks.cancel-send(); }
+            }
+
+            RetroButton {
+                label: "sign & send";
+                active: true;
+                clicked => { Callbacks.sign-psbt(); }
+            }
+        }
+    }
+
+    // 5 — error
+    if Callbacks.send-state == 5: VerticalLayout {
+        spacing: Size.sz2;
+        alignment: center;
+
+        TextXs {
+            text: Callbacks.send-broadcast;
+            color: Retro.ink;
+            width: 100%;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        RetroButton {
+            label: "back";
+            active: true;
+            clicked => { Callbacks.cancel-send(); }
+        }
+    }
+        }
+    }
+}
+
+// ───────────────────────────── tx detail ─────────────────────────────
+
+component TxDetailPage inherits VerticalLayout {
+    spacing: 0px;
+
+    // Scrollable so long tx details can't push the TabBar off-screen.
+    ScrollBody {
+        p-x: Size.sz2;
+        p-y: Size.sz2;
+
+        VerticalLayout {
+            spacing: Size.sz2;
+            alignment: start;
+
+            TextSm {
+                text: Callbacks.tx-subject;
+                color: Retro.ink;
+                bold: true;
+            }
+
+            Rectangle {
+                height: 120px;
+                background: Retro.face-bright;
+                border-width: 1px;
+                border-color: Retro.face-dark;
+
+                VerticalLayout {
+                    padding: Size.sz2;
+                    spacing: 8px;
+
+                    TextXs {
+                        text: "amount:  " + Callbacks.tx-amount + " BTC";
+                        color: Retro.ink;
+                        bold: true;
+                    }
+
+                    TextXs {
+                        text: Callbacks.tx-detail;
+                        color: Retro.ink-muted;
+                        wrap: word-wrap;
+                    }
+
+                    TextXs {
+                        text: Callbacks.tx-status;
+                        color: Retro.ink-muted;
+                    }
+                }
+            }
+
+            RetroButton {
+                label: "back to inbox";
+                active: true;
+                clicked => { Callbacks.show-page(0); }
+            }
+        }
+    }
+}
+
+// ───────────────────────────── tabs ─────────────────────────────
+
+component TabBar inherits Rectangle {
+    height: 64px;
+    background: Retro.face;
+    border-width: 1px;
+    border-color: Retro.ink;
+
+    HorizontalLayout {
+        padding: Size.sz1;
+        spacing: Size.sz2;
+
+        RetroButton {
+            label: "inbox";
+            active: Callbacks.page == 0;
+            clicked => { Callbacks.show-page(0); }
+        }
+
+        RetroButton {
+            label: "compose";
+            active: Callbacks.page == 1;
+            clicked => { Callbacks.show-page(1); }
+        }
+
+        RetroButton {
+            label: "> send";
+            active: Callbacks.page == 2;
+            clicked => { Callbacks.show-page(2); }
+        }
+    }
+}
+
+// ───────────────────────────── root ─────────────────────────────
+
+component App inherits BasePage {
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        TitleBar {}
+
+        BalanceBar {}
+
+        // Mount pages with `if`, exactly like QXXX / the KeyOS router — the
+        // proven-fast pattern on this hardware. Each page gets vertical-stretch
+        // so it fills the viewport above the fixed TabBar (and ScrollBody keeps
+        // tall content from pushing the TabBar off-screen).
+        //
+        // NOTE: do NOT switch this to `visible: page == N` to "keep pages
+        // alive" — invisible elements still occupy layout space in this slint
+        // version, so the four pages stack and the send page came out blank.
+        if Callbacks.page == 0: InboxPage { vertical-stretch: 1; }
+
+        if Callbacks.page == 1: ComposePage { vertical-stretch: 1; }
+
+        if Callbacks.page == 2: SendPage { vertical-stretch: 1; }
+
+        if Callbacks.page == 3: TxDetailPage { vertical-stretch: 1; }
+
+        TabBar {}
+    }
+}
+
+export component AppWindow inherits Window {
+    width: UISize.screen-width;
+    height: UISize.screen-height;
+    background: Retro.face;
+
+    app := App { }
+
+    init => {
+        CurrentTheme.palette = Palettes.dark;
+    }
+
+    // Allow unfocusing textboxes by clicking out of them
+    FocusScope {
+        init => {
+            self.focus()
+        }
+    }
+}

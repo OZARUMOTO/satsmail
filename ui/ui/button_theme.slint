@@ -1,0 +1,272 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// GENERATED from button.schema.json by foundation theme tooling — do not edit by hand.
+// Token-backed props reference the shared Theme global; JSON literals are inlined.
+
+import { Theme, ControlSize, ButtonVariant, ButtonState } from "theme.slint";
+
+export struct ButtonVariantProps {
+    background: color,
+    foreground: color,
+    border-color: color,
+    border-width: length,
+    font-weight: int,
+    opacity: float,
+    touch-expansion: length,
+}
+
+export struct ButtonSizeProps {
+    font-family: string,
+    font-size: length,
+    padding-h: length,
+    padding-v: length,
+    icon-size: length,
+    min-height: length,
+    border-radius: length,
+}
+
+export global ButtonTheme {
+    public pure function style(v: ButtonVariant, st: ButtonState) -> ButtonVariantProps {
+        if v == ButtonVariant.primary {
+            if st == ButtonState.focused {
+                return {
+                    background: Theme.color-primary,
+                    foreground: Theme.color-white,
+                    border-color: Theme.color-primary-light,
+                    border-width: 2px,
+                    font-weight: Theme.font-weight-medium,
+                    opacity: 1,
+                    touch-expansion: Theme.spacing-xs,
+                };
+            }
+            if st == ButtonState.pressed {
+                return {
+                    background: Theme.color-primary-dark,
+                    foreground: Theme.color-white,
+                    border-color: Theme.color-transparent,
+                    border-width: 0px,
+                    font-weight: Theme.font-weight-medium,
+                    opacity: 1,
+                    touch-expansion: Theme.spacing-xs,
+                };
+            }
+            if st == ButtonState.disabled {
+                return {
+                    background: Theme.color-primary,
+                    foreground: Theme.color-white,
+                    border-color: Theme.color-transparent,
+                    border-width: 0px,
+                    font-weight: Theme.font-weight-medium,
+                    opacity: 0.5,
+                    touch-expansion: Theme.spacing-xs,
+                };
+            }
+            return {
+                background: Theme.color-primary,
+                foreground: Theme.color-white,
+                border-color: Theme.color-transparent,
+                border-width: 0px,
+                font-weight: Theme.font-weight-medium,
+                opacity: 1,
+                touch-expansion: Theme.spacing-xs,
+            };
+        }
+        if v == ButtonVariant.secondary {
+            if st == ButtonState.focused {
+                return {
+                    background: Theme.color-secondary,
+                    foreground: Theme.color-foreground,
+                    border-color: Theme.color-primary,
+                    border-width: 2px,
+                    font-weight: Theme.font-weight-medium,
+                    opacity: 1,
+                    touch-expansion: Theme.spacing-xs,
+                };
+            }
+            if st == ButtonState.pressed {
+                return {
+                    background: Theme.color-secondary-dark,
+                    foreground: Theme.color-foreground,
+                    border-color: Theme.color-transparent,
+                    border-width: 0px,
+                    font-weight: Theme.font-weight-medium,
+                    opacity: 1,
+                    touch-expansion: Theme.spacing-xs,
+                };
+            }
+            if st == ButtonState.disabled {
+                return {
+                    background: Theme.color-secondary,
+                    foreground: Theme.color-foreground,
+                    border-color: Theme.color-transparent,
+                    border-width: 0px,
+                    font-weight: Theme.font-weight-medium,
+                    opacity: 0.5,
+                    touch-expansion: Theme.spacing-xs,
+                };
+            }
+            return {
+                background: Theme.color-secondary,
+                foreground: Theme.color-foreground,
+                border-color: Theme.color-transparent,
+                border-width: 0px,
+                font-weight: Theme.font-weight-medium,
+                opacity: 1,
+                touch-expansion: Theme.spacing-xs,
+            };
+        }
+        if v == ButtonVariant.tertiary {
+            if st == ButtonState.pressed {
+                return {
+                    background: Theme.color-primary-light,
+                    foreground: Theme.color-primary,
+                    border-color: Theme.color-primary,
+                    border-width: 2px,
+                    font-weight: Theme.font-weight-medium,
+                    opacity: 1,
+                    touch-expansion: Theme.spacing-xs,
+                };
+            }
+            if st == ButtonState.disabled {
+                return {
+                    background: Theme.color-transparent,
+                    foreground: Theme.color-primary,
+                    border-color: Theme.color-primary,
+                    border-width: 2px,
+                    font-weight: Theme.font-weight-medium,
+                    opacity: 0.5,
+                    touch-expansion: Theme.spacing-xs,
+                };
+            }
+            return {
+                background: Theme.color-transparent,
+                foreground: Theme.color-primary,
+                border-color: Theme.color-primary,
+                border-width: 2px,
+                font-weight: Theme.font-weight-medium,
+                opacity: 1,
+                touch-expansion: Theme.spacing-xs,
+            };
+        }
+        if v == ButtonVariant.ghost {
+            if st == ButtonState.focused {
+                return {
+                    background: Theme.color-transparent,
+                    foreground: Theme.color-foreground,
+                    border-color: Theme.color-primary,
+                    border-width: 2px,
+                    font-weight: Theme.font-weight-medium,
+                    opacity: 1,
+                    touch-expansion: Theme.spacing-xs,
+                };
+            }
+            if st == ButtonState.pressed {
+                return {
+                    background: Theme.color-foreground-light,
+                    foreground: Theme.color-foreground,
+                    border-color: Theme.color-transparent,
+                    border-width: 0px,
+                    font-weight: Theme.font-weight-medium,
+                    opacity: 1,
+                    touch-expansion: Theme.spacing-xs,
+                };
+            }
+            if st == ButtonState.disabled {
+                return {
+                    background: Theme.color-transparent,
+                    foreground: Theme.color-foreground,
+                    border-color: Theme.color-transparent,
+                    border-width: 0px,
+                    font-weight: Theme.font-weight-medium,
+                    opacity: 0.5,
+                    touch-expansion: Theme.spacing-xs,
+                };
+            }
+            return {
+                background: Theme.color-transparent,
+                foreground: Theme.color-foreground,
+                border-color: Theme.color-transparent,
+                border-width: 0px,
+                font-weight: Theme.font-weight-medium,
+                opacity: 1,
+                touch-expansion: Theme.spacing-xs,
+            };
+        }
+        if st == ButtonState.focused {
+            return {
+                background: Theme.color-danger,
+                foreground: Theme.color-white,
+                border-color: Theme.color-danger-light,
+                border-width: 2px,
+                font-weight: Theme.font-weight-medium,
+                opacity: 1,
+                touch-expansion: Theme.spacing-xs,
+            };
+        }
+        if st == ButtonState.pressed {
+            return {
+                background: Theme.color-danger-dark,
+                foreground: Theme.color-white,
+                border-color: Theme.color-transparent,
+                border-width: 0px,
+                font-weight: Theme.font-weight-medium,
+                opacity: 1,
+                touch-expansion: Theme.spacing-xs,
+            };
+        }
+        if st == ButtonState.disabled {
+            return {
+                background: Theme.color-danger,
+                foreground: Theme.color-white,
+                border-color: Theme.color-transparent,
+                border-width: 0px,
+                font-weight: Theme.font-weight-medium,
+                opacity: 0.5,
+                touch-expansion: Theme.spacing-xs,
+            };
+        }
+        return {
+            background: Theme.color-danger,
+            foreground: Theme.color-white,
+            border-color: Theme.color-transparent,
+            border-width: 0px,
+            font-weight: Theme.font-weight-medium,
+            opacity: 1,
+            touch-expansion: Theme.spacing-xs,
+        };
+    }
+    public pure function size(s: ControlSize) -> ButtonSizeProps {
+        if s == ControlSize.sm {
+            return {
+                font-family: Theme.font-primary,
+                font-size: Theme.font-size-sm,
+                padding-h: Theme.spacing-md,
+                padding-v: Theme.spacing-xs,
+                icon-size: Theme.icon-size-sm,
+                min-height: 52px,
+                border-radius: Theme.radius-default,
+            };
+        }
+        if s == ControlSize.md {
+            return {
+                font-family: Theme.font-primary,
+                font-size: Theme.font-size-md,
+                padding-h: Theme.spacing-lg,
+                padding-v: Theme.spacing-sm,
+                icon-size: Theme.icon-size-md,
+                min-height: 60px,
+                border-radius: Theme.radius-default,
+            };
+        }
+        return {
+            font-family: Theme.font-primary,
+            font-size: Theme.font-size-lg,
+            padding-h: Theme.spacing-xl,
+            padding-v: Theme.spacing-md,
+            icon-size: Theme.icon-size-lg,
+            min-height: 68px,
+            border-radius: Theme.radius-default,
+        };
+    }
+}
