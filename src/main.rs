@@ -26,6 +26,7 @@ use {
 };
 
 mod electrum;
+mod pair;
 mod send;
 mod sync;
 mod wallet;
@@ -181,6 +182,20 @@ fn app_main(cx: AppContext, ui: AppWindow) {
         .detach();
     }
 
+    // ── 1b. pairing state for the UI (fs IPC on a worker) ─────────────────
+    {
+        let ui = ui_weak.clone();
+        spawn_local(async move {
+            let paired = spawn_worker(async move { pair::is_paired() }).await;
+            if let Some(ui) = ui.upgrade() {
+                ui.global::<Callbacks>().set_pairing_status(
+                    if paired { "paired".into() } else { "not paired".into() },
+                );
+            }
+        })
+        .detach();
+    }
+
     // ── 2. callbacks ──────────────────────────────────────────────────────
     ui.global::<Callbacks>().on_show_page({
         let ui = ui.as_weak();
@@ -273,6 +288,88 @@ fn app_main(cx: AppContext, ui: AppWindow) {
         }
     });
 
+    ui.global::<Callbacks>().on_pair_with_box({
+        let ui = ui.as_weak();
+        move || {
+            let Some(ui) = ui.upgrade() else { return };
+            ui.global::<Callbacks>()
+                .set_pairing_status("scanning pairing qr…".into());
+
+            let opts = ScanQrOptions {
+                header_title: "scan pairing qr".into(),
+                header_right_icon: "close".into(),
+                ..ScanQrOptions::default()
+            };
+            let scan = match open_qr_scanner::<gui_permissions::GuiPermissions>(opts) {
+                Ok(Some(s)) => s,
+                Ok(None) => {
+                    ui.global::<Callbacks>().set_pairing_status("pairing cancelled".into());
+                    return;
+                }
+                Err(e) => {
+                    log::error!("satsmail: qr scanner error {e:?}");
+                    ui.global::<Callbacks>().set_pairing_status("scanner error".into());
+                    return;
+                }
+            };
+
+            // The box's /pair page encodes plain text `satsmail-pair:<hex>`.
+            let ScanQrResult::Qr { data, .. } = scan else {
+                ui.global::<Callbacks>().set_pairing_status("bad pairing qr".into());
+                return;
+            };
+            let Ok(text) = String::from_utf8(data) else {
+                ui.global::<Callbacks>().set_pairing_status("bad pairing qr".into());
+                return;
+            };
+            let secret: String = text.strip_prefix(pair::PAIR_PREFIX).unwrap_or("").trim().to_string();
+            if secret.len() != 64 || !secret.chars().all(|c| c.is_ascii_hexdigit()) {
+                ui.global::<Callbacks>().set_pairing_status("bad pairing qr".into());
+                return;
+            }
+
+            let ui = ui.as_weak();
+            spawn_local(async move {
+                let result = spawn_worker(async move { pair::save_pairing(&secret) }).await;
+                let Some(ui) = ui.upgrade() else { return };
+                match result {
+                    Ok(()) => {
+                        log::info!("satsmail: paired with box");
+                        ui.global::<Callbacks>()
+                            .set_pairing_status("paired — box authenticated".into());
+                    }
+                    Err(e) => {
+                        log::error!("satsmail: save pairing failed {e:?}");
+                        ui.global::<Callbacks>().set_pairing_status("pairing failed".into());
+                    }
+                }
+            })
+            .detach();
+        }
+    });
+
+    ui.global::<Callbacks>().on_forget_pairing({
+        let ui = ui.as_weak();
+        move || {
+            let ui = ui.clone();
+            spawn_local(async move {
+                let result = spawn_worker(async move { pair::clear_pairing() }).await;
+                let Some(ui) = ui.upgrade() else { return };
+                match result {
+                    Ok(()) => {
+                        log::info!("satsmail: pairing cleared");
+                        ui.global::<Callbacks>().set_pairing_status("not paired".into());
+                    }
+                    Err(e) => {
+                        log::error!("satsmail: clear pairing failed {e:?}");
+                        ui.global::<Callbacks>().set_pairing_status("unpair failed".into());
+                    }
+                }
+            })
+            .detach();
+        }
+    });
+
     ui.global::<Callbacks>().on_refresh({
         let ui = ui.as_weak();
         let state = state.clone();
@@ -310,6 +407,36 @@ fn app_main(cx: AppContext, ui: AppWindow) {
                 ui.global::<Callbacks>().set_sync_status("bad sync qr".into());
                 return;
             };
+
+            // Paranoid mode: every sync payload must be authenticated by the
+            // pairing secret established via "pair with box". Once paired this
+            // is default-deny — an unauthenticated or forged QR is rejected
+            // outright, so a compromised screen can't feed a fake balance.
+            match pair::verify_sync(&payload) {
+                Ok(()) => {
+                    ui.global::<Callbacks>()
+                        .set_pairing_status("paired — box authenticated".into());
+                }
+                Err(pair::AuthError::NotPaired) => {
+                    ui.global::<Callbacks>().set_sync_status(
+                        "not paired — use 'pair with box' first".into(),
+                    );
+                    return;
+                }
+                Err(pair::AuthError::MissingTag) | Err(pair::AuthError::BadTag) => {
+                    log::warn!("satsmail: sync QR failed authentication");
+                    ui.global::<Callbacks>().set_sync_status(
+                        "auth failed — sync qr is not from your box".into(),
+                    );
+                    return;
+                }
+                Err(pair::AuthError::Stale) => {
+                    ui.global::<Callbacks>()
+                        .set_sync_status("stale sync qr — rescan from the box page".into());
+                    return;
+                }
+            }
+
             // Stash the compose-send inputs the payload carries (UTXOs, fee
             // presets, broadcast page) so the > send tab can build on-device.
             {

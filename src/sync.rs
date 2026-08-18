@@ -89,6 +89,12 @@ pub struct QrSyncPayload {
     /// open the page and the box broadcasts via its own bitcoind.
     #[serde(default)]
     pub broadcast_base: Option<String>,
+    /// HMAC-SHA256 tag over the canonical payload (key = the pairing secret
+    /// established via the /pair QR). Set by the box, verified by the device
+    /// (see `pair::verify_sync`). Skipped when serializing so the device can
+    /// re-derive the exact bytes the box signed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hmac: Option<String>,
 }
 
 impl QrSyncPayload {

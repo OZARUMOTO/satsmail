@@ -40,6 +40,8 @@ export global Callbacks {
     callback export-xpub();  // save the account xpub to the airlock (USB share)
     callback refresh();
     callback scan-sync();   // offline inbox refresh: scan a sync QR from the phone
+    callback pair-with-box();   // scan the box's /pair QR, store the HMAC secret
+    callback forget-pairing();  // drop the pairing secret (sync goes back to unverified)
     callback scan-psbt();
     callback sign-psbt();
     callback cancel-send();
@@ -71,6 +73,9 @@ export global Callbacks {
     in-out property <string> account-xpub: "";
     in-out property <string> export-status: "";
     in-out property <string> sync-status: "electrum: offline";
+    // Pairing state: "not paired" / "paired" / transient statuses. While
+    // paired, sync QRs MUST carry a valid HMAC or they're rejected.
+    in-out property <string> pairing-status: "not paired";
     in-out property <[MailItem]> inbox;
 
     // send flow state: 0 idle, 1 scanning, 2 preview, 3 signing, 4 done, 5 error,
@@ -282,6 +287,14 @@ component InboxPage inherits VerticalLayout {
         clicked => { Callbacks.scan-sync(); }
     }
 
+    // Pair with the box: scans its /pair QR once. From then on every sync QR
+    // must be HMAC-authenticated by that secret or it's rejected.
+    RetroButton {
+        label: "pair with box";
+        height: 48px;
+        clicked => { Callbacks.pair-with-box(); }
+    }
+
     // Status line, like a mail client's footer — pinned below the list
     Rectangle {
         height: 28px;
@@ -292,6 +305,24 @@ component InboxPage inherits VerticalLayout {
 
             TextXs {
                 text: "inbox (" + Callbacks.unread + ")  |  tap to refresh";
+                color: Retro.ink-muted;
+                width: 100%;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    // Pairing footer — tap to unpair (drop the HMAC secret).
+    Rectangle {
+        height: 22px;
+        background: Retro.face;
+
+        TouchArea {
+            clicked => { Callbacks.forget-pairing(); }
+
+            TextXs {
+                text: "pairing: " + Callbacks.pairing-status + "  (tap to unpair)";
                 color: Retro.ink-muted;
                 width: 100%;
                 horizontal-alignment: center;
