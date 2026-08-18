@@ -22,6 +22,7 @@ use ngwallet::{
             secp256k1::Secp256k1,
             Address, Amount, FeeRate, Network, NetworkKind, Psbt, ScriptBuf, TxOut,
         },
+        KeychainKind,
     },
     bip39::MasterKey,
     psbt::{self, TransactionDetails},
@@ -74,6 +75,66 @@ pub fn sign(pending: &PendingPsbt, master: &MasterKey) -> anyhow::Result<Vec<u8>
 pub fn signed_ur_parts(signed: &[u8], density: i32) -> ModelRc<SharedString> {
     let bytes = minicbor_bytes(signed);
     encode_qr_parts("psbt", bytes, density)
+}
+
+/// Compute the txid of a signed PSBT — the receipt the box should report
+/// back after broadcasting. The txid is just a hash of the serialized tx, so
+/// the Prime can compute it WITHOUT any network: it's the ground truth the
+/// box's receipt is checked against in the broadcast-receipt loop.
+pub fn signed_txid(signed: &[u8]) -> anyhow::Result<String> {
+    let psbt = Psbt::deserialize(signed)?;
+    let tx = psbt.extract_tx()?;
+    Ok(tx.compute_txid().to_string())
+}
+
+/// The change output of a pending tx, if any, with its derivation path.
+///
+/// Change-address proof: the change output (the leftover coming back to us)
+/// is matched against OUR internal keychain and reported with its exact
+/// derivation path (e.g. `m/86'/0'/0'/1/3`), so a paranoid user can
+/// independently re-derive it in a descriptor tool and confirm nothing weird
+/// happened. Finding the address by scanning our own keychain IS the
+/// on-device verification — a change output that doesn't derive from our
+/// seed can never match. Returns None for an exact spend (no change) or when
+/// the change index is outside the lookahead window.
+pub fn change_proof(
+    network: Network,
+    master: &MasterKey,
+    pending: &PendingPsbt,
+) -> Option<(String, String)> {
+    let change_addr = pending.details.outputs.iter().find_map(|o| match &o.kind {
+        ngwallet::psbt::OutputKind::Change(addr) => Some(addr.clone()),
+        _ => None,
+    })?;
+    let script = change_addr.script_pubkey();
+    let wallet = crate::wallet::build_wallet(network, master).ok()?;
+    for i in 0..crate::wallet::LOOKAHEAD_INTERNAL {
+        let addr = wallet.peek_address(KeychainKind::Internal, i);
+        if addr.address.script_pubkey() == script {
+            let coin: u32 = if network == Network::Bitcoin { 0 } else { 1 };
+            let path = format!("m/86'/{coin}'/{}'/1/{i}", crate::wallet::ACCOUNT_INDEX);
+            return Some((change_addr.to_string(), path));
+        }
+    }
+    None
+}
+
+/// Parse a broadcast-receipt QR text:
+/// `satsmail-receipt:<status>:<txid>[:<confirmations>]` where status is
+/// `mempool` or `confirmed`. Returns (status, lowercase txid, confs).
+pub fn parse_receipt(text: &str) -> Option<(String, String, Option<u32>)> {
+    let rest = text.trim().strip_prefix("satsmail-receipt:")?;
+    let mut parts = rest.split(':');
+    let status = parts.next()?;
+    if status != "mempool" && status != "confirmed" {
+        return None;
+    }
+    let txid = parts.next()?;
+    if txid.len() != 64 || !txid.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let confs = parts.next().and_then(|n| n.parse::<u32>().ok());
+    Some((status.to_string(), txid.to_lowercase(), confs))
 }
 
 /// Extract the fully-signed transaction hex, for direct broadcast via Electrum.
@@ -218,4 +279,42 @@ pub fn build_compose(network: Network, master: &MasterKey, draft: &ComposeDraft)
     let details = psbt::validate(&secp, &xpriv, &psbt, network)?;
 
     Ok(PendingPsbt { psbt, details, network })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_receipt;
+
+    // A valid 64-char hex txid.
+    const TXID: &str = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809";
+
+    #[test]
+    fn receipt_parses_mempool() {
+        let r = parse_receipt(&format!("satsmail-receipt:mempool:{TXID}"));
+        assert_eq!(r, Some(("mempool".to_string(), TXID.to_string(), None)));
+    }
+
+    #[test]
+    fn receipt_parses_confirmed_with_confs() {
+        let r = parse_receipt(&format!("satsmail-receipt:confirmed:{TXID}:12"));
+        assert_eq!(
+            r,
+            Some(("confirmed".to_string(), TXID.to_string(), Some(12)))
+        );
+    }
+
+    #[test]
+    fn receipt_is_case_insensitive_and_trims() {
+        let upper = TXID.to_uppercase();
+        let r = parse_receipt(&format!("  satsmail-receipt:mempool:{upper}  "));
+        assert_eq!(r, Some(("mempool".to_string(), TXID.to_string(), None)));
+    }
+
+    #[test]
+    fn receipt_rejects_garbage() {
+        assert_eq!(parse_receipt("satsmail-receipt:mempool:short"), None);
+        assert_eq!(parse_receipt("satsmail-receipt:unknown:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), None);
+        assert_eq!(parse_receipt("bc1p7yn23p5rwsgweaem9kxjuuuaxmv82hxtcexjjgnynm0vhwnsvc0qhugnaz"), None);
+        assert_eq!(parse_receipt(""), None);
+    }
 }

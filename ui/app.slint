@@ -53,10 +53,12 @@ export global Callbacks {
     callback compose-send();
     callback scan-address();
     callback set-amount(string);
+    callback set-amount-confirm(string);   // type-twice: re-typed amount check
     callback set-fee-preset(int);
     callback set-custom-fee(string);
     callback build-compose();
     pure callback get-broadcast-url() -> string;
+    callback verify-broadcast();  // scan the box's receipt QR, check the txid
 
     in-out property <int> page: 0;                        // 0 inbox, 1 compose, 2 send, 3 tx detail
     in-out property <int> unread: 0;
@@ -100,6 +102,19 @@ export global Callbacks {
     // (same reason as receive-qr — the Qrcode widget would re-run Utils.qrcode
     // on the UI thread every time the send page is constructed).
     in-out property <image> broadcast-qr;
+
+    // type-the-amount-twice gate (compose preview): the sign button stays
+    // locked until the user re-types the exact amount from the preview.
+    in-out property <bool> send-amount-confirmed: false;
+    in-out property <string> send-amount-confirm: "";
+    // change-address proof (compose preview): the change output + its
+    // derivation path, matched against our internal keychain on-device.
+    in-out property <string> send-change-addr: "";
+    in-out property <string> send-change-path: "";
+    // broadcast-receipt loop (compose done): the txid the Prime computed from
+    // the signed tx, and the result of scanning the box's receipt QR.
+    in-out property <string> expected-txid: "";
+    in-out property <string> verify-broadcast-result: "";
 
     // tx detail page
     in-out property <string> tx-subject;
@@ -693,10 +708,27 @@ component SendPage inherits VerticalLayout {
         }
 
         TextXs {
-            text: Callbacks.send-broadcast;
+            text: Callbacks.expected-txid != ""
+                ? "expected txid:  " + Callbacks.expected-txid
+                : "";
+            color: Retro.ink-muted;
+            width: 100%;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        TextXs {
+            text: Callbacks.verify-broadcast-result;
             color: Retro.ink;
             width: 100%;
             horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        RetroButton {
+            label: "verify broadcast";
+            active: Callbacks.expected-txid != "";
+            clicked => { Callbacks.verify-broadcast(); }
         }
 
         RetroButton {
@@ -820,13 +852,16 @@ component SendPage inherits VerticalLayout {
         }
     }
 
-    // 8 — compose preview (the "draft" email)
+    // 8 — compose preview (the "draft" email). Paranoid checks live here:
+    // change-address proof (change output + derivation path, matched against
+    // our keychain on-device) and type-the-amount-twice (the sign button
+    // stays locked until the re-typed amount matches the draft exactly).
     if Callbacks.send-state == 8: VerticalLayout {
         spacing: Size.sz2;
         alignment: start;
 
         Rectangle {
-            height: 160px;
+            height: 200px;
             background: Retro.face-bright;
             border-width: 1px;
             border-color: Retro.face-dark;
@@ -851,7 +886,33 @@ component SendPage inherits VerticalLayout {
                     text: "fee:  " + Callbacks.send-fee + " BTC";
                     color: Retro.ink-muted;
                 }
+
+                TextXs {
+                    text: Callbacks.send-change-addr != ""
+                        ? "change:  " + Callbacks.send-change-addr + "  (" + Callbacks.send-change-path + ")"
+                        : "change:  none — exact spend";
+                    color: Retro.ink;
+                    wrap: word-wrap;
+                }
             }
+        }
+
+        TextXs {
+            text: "re-type the amount to confirm";
+            color: Retro.ink-muted;
+        }
+
+        TermInput {
+            text <=> Callbacks.send-amount-confirm;
+            input-type: InputType.decimal;
+            edited => { Callbacks.set-amount-confirm(Callbacks.send-amount-confirm); }
+        }
+
+        TextXs {
+            text: Callbacks.send-amount-confirmed ? "amount confirmed — ok to sign" : "amounts must match before signing";
+            color: Retro.ink;
+            width: 100%;
+            horizontal-alignment: center;
         }
 
         HorizontalLayout {
@@ -866,7 +927,7 @@ component SendPage inherits VerticalLayout {
 
             RetroButton {
                 label: "sign & send";
-                active: true;
+                active: Callbacks.send-amount-confirmed;
                 clicked => { Callbacks.sign-psbt(); }
             }
         }

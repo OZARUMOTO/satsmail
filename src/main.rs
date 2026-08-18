@@ -72,6 +72,12 @@ struct AppState {
     compose_draft: Option<send::ComposeDraft>,
     /// The pushtx URL QR for the compose done screen (built after signing).
     broadcast_url: Option<String>,
+    /// Type-the-amount-twice gate: the re-typed amount matches the draft.
+    amount_confirmed: bool,
+    /// The txid we expect the box to report after broadcasting the compose tx
+    /// (computed on-device from the signed tx — the broadcast-receipt loop's
+    /// ground truth; the box's receipt must match it).
+    expected_txid: Option<String>,
 }
 
 impl AppState {
@@ -89,6 +95,8 @@ impl AppState {
             broadcast_base: None,
             compose_draft: None,
             broadcast_url: None,
+            amount_confirmed: false,
+            expected_txid: None,
         }
     }
 }
@@ -556,11 +564,15 @@ fn app_main(cx: AppContext, ui: AppWindow) {
                 let result = spawn_worker(async move {
                     let signed = send::sign(&pending, &master)?;
                     // For compose-send, also build the pushtx URL QR on the
-                    // worker (bdk extract + base64/sha — never on the UI thread).
+                    // worker (bdk extract + base64/sha — never on the UI thread)
+                    // and compute the expected txid — the on-device ground
+                    // truth for the broadcast-receipt loop.
+                    let mut expected_txid = None;
                     let broadcast_url = if mode {
                         match broadcast_base {
                             Some(base) => {
                                 let hex = send::extract_tx_hex(&pending, &master)?;
+                                expected_txid = Some(send::signed_txid(&signed)?);
                                 Some(send::pushtx_url(&hex, &base))
                             }
                             None => None,
@@ -568,18 +580,23 @@ fn app_main(cx: AppContext, ui: AppWindow) {
                     } else {
                         None
                     };
-                    Ok::<_, anyhow::Error>((signed, broadcast_url))
+                    Ok::<_, anyhow::Error>((signed, broadcast_url, expected_txid))
                 })
                 .await;
                 match result {
-                    Ok((signed, broadcast_url)) => {
+                    Ok((signed, broadcast_url, expected_txid)) => {
                         let Some(ui) = ui.upgrade() else { return };
                         state.borrow_mut().signed = Some(signed);
                         state.borrow_mut().broadcast_url = broadcast_url.clone();
+                        state.borrow_mut().expected_txid = expected_txid.clone();
                         ui.global::<Callbacks>().set_send_broadcast("".into());
                         ui.global::<Callbacks>().set_broadcast_url(
                             broadcast_url.clone().unwrap_or_default().into(),
                         );
+                        ui.global::<Callbacks>().set_expected_txid(
+                            expected_txid.clone().unwrap_or_default().into(),
+                        );
+                        ui.global::<Callbacks>().set_verify_broadcast_result("".into());
                         // Pre-render the pushtx-URL QR once here (UI thread,
                         // after the worker returns) instead of letting the
                         // Qrcode widget re-run Utils.qrcode on every send-page
@@ -616,10 +633,14 @@ fn app_main(cx: AppContext, ui: AppWindow) {
             state.borrow_mut().signed = None;
             state.borrow_mut().compose_draft = None;
             state.borrow_mut().broadcast_url = None;
+            state.borrow_mut().amount_confirmed = false;
+            state.borrow_mut().expected_txid = None;
             if let Some(ui) = ui.upgrade() {
                 ui.global::<Callbacks>().set_send_mode(0);
                 ui.global::<Callbacks>().set_send_state(0);
                 ui.global::<Callbacks>().set_broadcast_qr(slint_keyos_platform::slint::Image::default());
+                ui.global::<Callbacks>().set_expected_txid("".into());
+                ui.global::<Callbacks>().set_verify_broadcast_result("".into());
             }
         }
     });
@@ -632,10 +653,14 @@ fn app_main(cx: AppContext, ui: AppWindow) {
             state.borrow_mut().signed = None;
             state.borrow_mut().compose_draft = None;
             state.borrow_mut().broadcast_url = None;
+            state.borrow_mut().amount_confirmed = false;
+            state.borrow_mut().expected_txid = None;
             if let Some(ui) = ui.upgrade() {
                 ui.global::<Callbacks>().set_send_mode(0);
                 ui.global::<Callbacks>().set_send_state(0);
                 ui.global::<Callbacks>().set_broadcast_qr(slint_keyos_platform::slint::Image::default());
+                ui.global::<Callbacks>().set_expected_txid("".into());
+                ui.global::<Callbacks>().set_verify_broadcast_result("".into());
                 ui.global::<Callbacks>().set_page(0);
             }
         }
@@ -681,6 +706,82 @@ fn app_main(cx: AppContext, ui: AppWindow) {
             match signed {
                 Some(bytes) => send::signed_ur_parts(&bytes, density),
                 None => ModelRc::default(),
+            }
+        }
+    });
+
+    // Broadcast-receipt loop: after the phone scans the pushtx QR and the
+    // box broadcasts, the box shows a receipt QR
+    // (`satsmail-receipt:<status>:<txid>[:<confs>]`). Scanning it here checks
+    // the txid against the one the Prime computed from the tx it signed — a
+    // lying box can't fake that, because the txid is a hash of the very bytes
+    // the Prime produced. The loop closes without trusting the box's word.
+    ui.global::<Callbacks>().on_verify_broadcast({
+        let ui = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let Some(ui) = ui.upgrade() else { return };
+            let expected = state.borrow().expected_txid.clone();
+            let Some(expected) = expected else {
+                ui.global::<Callbacks>()
+                    .set_verify_broadcast_result("no signed tx to verify".into());
+                return;
+            };
+            ui.global::<Callbacks>()
+                .set_verify_broadcast_result("scan the box's receipt qr…".into());
+
+            let opts = ScanQrOptions {
+                header_title: "scan receipt".into(),
+                header_right_icon: "close".into(),
+                ..ScanQrOptions::default()
+            };
+            let scan = match open_qr_scanner::<gui_permissions::GuiPermissions>(opts) {
+                Ok(Some(s)) => s,
+                Ok(None) => {
+                    ui.global::<Callbacks>()
+                        .set_verify_broadcast_result("verify cancelled".into());
+                    return;
+                }
+                Err(e) => {
+                    log::error!("satsmail: qr scanner error {e:?}");
+                    ui.global::<Callbacks>()
+                        .set_verify_broadcast_result("scanner error".into());
+                    return;
+                }
+            };
+
+            let ScanQrResult::Qr { data, .. } = scan else {
+                ui.global::<Callbacks>()
+                    .set_verify_broadcast_result("not a receipt qr".into());
+                return;
+            };
+            let Ok(text) = String::from_utf8(data) else {
+                ui.global::<Callbacks>()
+                    .set_verify_broadcast_result("bad receipt text".into());
+                return;
+            };
+
+            match send::parse_receipt(&text) {
+                Some((status, txid, confs)) if txid == expected => {
+                    let msg = match (status.as_str(), confs) {
+                        ("confirmed", Some(n)) => {
+                            format!("broadcast confirmed — {n} confirmations")
+                        }
+                        ("confirmed", None) => "broadcast confirmed".to_string(),
+                        _ => "broadcast confirmed — in mempool".to_string(),
+                    };
+                    ui.global::<Callbacks>().set_verify_broadcast_result(msg.into());
+                }
+                Some((_, txid, _)) => {
+                    log::warn!("satsmail: receipt txid {} != expected {}", txid, expected);
+                    ui.global::<Callbacks>().set_verify_broadcast_result(
+                        format!("txid mismatch — this receipt is not for the tx you signed\nbox: {txid:.10}...").into(),
+                    );
+                }
+                None => {
+                    ui.global::<Callbacks>()
+                        .set_verify_broadcast_result("not a satsmail receipt qr".into());
+                }
             }
         }
     });
@@ -773,6 +874,34 @@ fn app_main(cx: AppContext, ui: AppWindow) {
             if let Some(d) = state.borrow_mut().compose_draft.as_mut() {
                 d.amount_sats = sats.unwrap_or(0);
             }
+            // Changing the amount invalidates any earlier type-twice confirm.
+            state.borrow_mut().amount_confirmed = false;
+            if let Some(ui) = ui.upgrade() {
+                ui.global::<Callbacks>().set_send_amount_confirmed(false);
+                ui.global::<Callbacks>().set_send_amount_confirm("".into());
+            }
+        }
+    });
+
+    // Type-the-amount-twice (Coldcard-style): the sign button on the compose
+    // preview stays locked until the user re-types the exact amount. This is
+    // the second, independent confirmation of intent at the exact moment the
+    // device has the private key loaded — it defeats both fat-finger errors
+    // and any display-vs-sign mismatch.
+    ui.global::<Callbacks>().on_set_amount_confirm({
+        let ui = ui.as_weak();
+        let state = state.clone();
+        move |confirm: SharedString| {
+            let ok = state
+                .borrow()
+                .compose_draft
+                .as_ref()
+                .map(|d| parse_btc_to_sats(&confirm) == Some(d.amount_sats))
+                .unwrap_or(false);
+            state.borrow_mut().amount_confirmed = ok;
+            if let Some(ui) = ui.upgrade() {
+                ui.global::<Callbacks>().set_send_amount_confirmed(ok);
+            }
         }
     });
 
@@ -853,18 +982,33 @@ fn app_main(cx: AppContext, ui: AppWindow) {
             let state = state.clone();
             spawn_local(async move {
                 let result = spawn_worker(async move {
-                    send::build_compose(Network::Bitcoin, &master, &draft)
+                    let pending = send::build_compose(Network::Bitcoin, &master, &draft)?;
+                    // Change-address proof: find the change output + its
+                    // derivation path (on the worker — deriving taproot
+                    // addresses on the UI thread is what froze the device).
+                    let proof = send::change_proof(Network::Bitcoin, &master, &pending);
+                    Ok::<_, anyhow::Error>((pending, proof))
                 })
                 .await;
                 let Some(ui) = ui.upgrade() else { return };
                 match result {
-                    Ok(pending) => {
+                    Ok((pending, proof)) => {
                         let (to, amount, fee) = send::preview_lines(&pending);
                         let g = ui.global::<Callbacks>();
                         g.set_send_to(to.into());
                         g.set_send_amount(amount.into());
                         g.set_send_fee(fee.into());
                         g.set_send_broadcast("".into());
+                        g.set_send_change_addr(
+                            proof.as_ref().map(|(a, _)| a.clone()).unwrap_or_default().into(),
+                        );
+                        g.set_send_change_path(
+                            proof.as_ref().map(|(_, p)| p.clone()).unwrap_or_default().into(),
+                        );
+                        // Fresh build → the type-twice gate starts locked.
+                        state.borrow_mut().amount_confirmed = false;
+                        g.set_send_amount_confirmed(false);
+                        g.set_send_amount_confirm("".into());
                         g.set_send_state(8); // compose preview
                         state.borrow_mut().pending = Some(pending);
                         state.borrow_mut().signed = None;
