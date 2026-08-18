@@ -236,29 +236,19 @@ pub struct ComposeDraft {
 
 /// Build + validate a PSBT from a compose draft, entirely on-device.
 ///
-/// UTXOs are inserted into the bdk wallet's txout cache so coin selection can
-/// see them; the tx is then built with `build_tx()` (bdk picks inputs to cover
-/// amount + fee, change goes back to our own internal keychain). The result is
-/// a `PendingPsbt` like the scanned-PSBT path, so the existing verify/preview/
-/// sign machinery is reused unchanged.
+/// The synced UTXOs are added as FOREIGN inputs (`add_foreign_utxo`) — bdk's
+/// coin selection would otherwise never see them: a fresh no-persist wallet
+/// has no chain data, and `filter_chain_unspents` drops any outpoint whose
+/// parent tx isn't in the graph with a chain anchor. (This was the compose-
+/// send "Insufficient funds: 0 BTC available" bug — `insert_txout` stores
+/// the txout but never makes it spendable.) Foreign inputs carry their own
+/// witness_utxo + satisfaction weight, sign fine against our descriptors
+/// (validate already proved they're ours), and coin selection forces them in
+/// as required inputs. Change still goes back to our own internal keychain.
+/// The result is a `PendingPsbt` like the scanned-PSBT path, so the existing
+/// verify/preview/sign machinery is reused unchanged.
 pub fn build_compose(network: Network, master: &MasterKey, draft: &ComposeDraft) -> anyhow::Result<PendingPsbt> {
     let mut wallet = crate::wallet::build_wallet(network, master)?;
-
-    // Feed the synced UTXOs into the wallet's txout cache.
-    for u in &draft.utxos {
-        let outpoint = format!("{}:{}", u.txid, u.vout)
-            .parse()
-            .map_err(|e| anyhow::anyhow!("bad outpoint {}:{}: {e}", u.txid, u.vout))?;
-        let script = ScriptBuf::from_hex(&u.script_hex)
-            .map_err(|e| anyhow::anyhow!("bad utxo script: {e}"))?;
-        wallet.insert_txout(
-            outpoint,
-            TxOut {
-                value: Amount::from_sat(u.value_sats),
-                script_pubkey: script,
-            },
-        );
-    }
 
     let to_addr = Address::from_str(&draft.to)
         .map_err(|e| anyhow::anyhow!("invalid address: {e}"))?
@@ -270,6 +260,35 @@ pub fn build_compose(network: Network, master: &MasterKey, draft: &ComposeDraft)
     let mut builder = wallet.build_tx();
     builder.add_recipient(to_addr.script_pubkey(), Amount::from_sat(draft.amount_sats));
     builder.fee_rate(fee_rate);
+
+    // The synced UTXOs as required foreign inputs. The box verified these are
+    // unspent outputs on OUR scripts (balance = their sum), and psbt::validate
+    // re-checks them against the master key below — so the value/script in the
+    // witness_utxo is not blindly trusted. Satisfaction weight = the full
+    // P2TR key-path witness (1 count + 1+64 sig + 1+1 sighash = 68 WU), the
+    // same number bdk itself computes for a finalized taproot spend.
+    for u in &draft.utxos {
+        let outpoint = format!("{}:{}", u.txid, u.vout)
+            .parse()
+            .map_err(|e| anyhow::anyhow!("bad outpoint {}:{}: {e}", u.txid, u.vout))?;
+        let script = ScriptBuf::from_hex(&u.script_hex)
+            .map_err(|e| anyhow::anyhow!("bad utxo script: {e}"))?;
+        let psbt_input = ngwallet::bdk_wallet::bitcoin::psbt::Input {
+            witness_utxo: Some(TxOut {
+                value: Amount::from_sat(u.value_sats),
+                script_pubkey: script,
+            }),
+            ..Default::default()
+        };
+        builder
+            .add_foreign_utxo(
+                outpoint,
+                psbt_input,
+                ngwallet::bdk_wallet::bitcoin::Weight::from_wu_usize(68),
+            )
+            .map_err(|e| anyhow::anyhow!("add utxo {}:{}: {e}", u.txid, u.vout))?;
+    }
+
     let psbt = builder.finish().map_err(|e| anyhow::anyhow!("build failed: {e}"))?;
 
     // Validate the built PSBT against our master key (same as the scanned
@@ -283,7 +302,7 @@ pub fn build_compose(network: Network, master: &MasterKey, draft: &ComposeDraft)
 
 #[cfg(test)]
 mod tests {
-    use super::parse_receipt;
+    use super::{build_compose, parse_receipt, sign, signed_txid, ComposeDraft};
 
     // A valid 64-char hex txid.
     const TXID: &str = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809";
@@ -316,5 +335,46 @@ mod tests {
         assert_eq!(parse_receipt("satsmail-receipt:unknown:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), None);
         assert_eq!(parse_receipt("bc1p7yn23p5rwsgweaem9kxjuuuaxmv82hxtcexjjgnynm0vhwnsvc0qhugnaz"), None);
         assert_eq!(parse_receipt(""), None);
+    }
+
+    // Regression: a UTXO fed in via the sync payload must be spendable by
+    // build_compose. Reproduces the real "0 BTC available" the device showed
+    // when compose-send tried to spend a synced (but unrevealed) UTXO.
+    #[test]
+    fn compose_build_selects_synced_utxo() -> anyhow::Result<()> {
+        use ngwallet::bdk_wallet::bitcoin::{secp256k1::Secp256k1, Network};
+        use ngwallet::bdk_wallet::KeychainKind;
+        use ngwallet::bip39::MasterKey;
+
+        let secp = Secp256k1::new();
+        let master = MasterKey::from_entropy(&secp, Network::Bitcoin, &[7u8; 32], "", None)?;
+        let w = crate::wallet::build_wallet(Network::Bitcoin, &master)?;
+        let our_script = w.peek_address(KeychainKind::External, 0).address.script_pubkey();
+        let recipient = w.peek_address(KeychainKind::External, 1).address.to_string();
+
+        // A synced UTXO exactly like the box sends (1 utxo, 2104 sats).
+        let utxo = crate::sync::QrUtxo {
+            txid: TXID.to_string(),
+            vout: 0,
+            script_hex: hex::encode(our_script.to_bytes()),
+            value_sats: 2104,
+            confirmed: true,
+        };
+        let draft = ComposeDraft {
+            to: recipient,
+            amount_sats: 1000,
+            fee_rate_sat_vb: 1,
+            utxos: vec![utxo],
+        };
+        let pending = build_compose(Network::Bitcoin, &master, &draft)?;
+        // The synced UTXO must be selected as an input (not "0 available").
+        assert_eq!(pending.psbt.unsigned_tx.input.len(), 1);
+        // End-to-end: the foreign-input tx must sign and extract cleanly
+        // (foreign inputs carry their own witness_utxo — signing never needs
+        // the wallet's txout cache or chain data).
+        let signed = sign(&pending, &master)?;
+        let txid = signed_txid(&signed)?;
+        assert_eq!(txid.len(), 64);
+        Ok(())
     }
 }
